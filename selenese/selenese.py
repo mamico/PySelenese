@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import os
+import glob
 import unittest
 
 from copy import deepcopy
@@ -28,14 +29,14 @@ def run_html_test(obj):
     # to attach all of them to the test case, then work out the index from
     # the function name
     try:
-        index = int(obj._testMethodName.replace("test_", ""))
+        index = obj._testMethodName.replace("test_", "")
         table = obj.test_tables[index]
     except ValueError:
         raise PySeleneseError("Can't work out which file this test function came from.")
     except AttributeError:
         raise PySeleneseError("Can't work out what my test function is called: has unittest.py changed?")
     except KeyError:
-        raise PySeleneseError("I think I'm test #%d but my test class doesn't have the HTML for that." % index)
+        raise PySeleneseError("I think I'm test #%s but my test class doesn't have the HTML for that." % index)
 
     for instruction in table.findall(".//tr"):
         args = instruction.findall("td")
@@ -81,7 +82,13 @@ def convert_selenese(my_dir='.', _root_url = None, DEBUG = False):
     old_dir = os.getcwd()
     os.chdir(my_dir)
     p = etree.HTMLParser()
-    x = etree.parse('index.html', p)
+    tests = []
+    if os.path.exists('index.html'):
+        x = etree.parse('index.html', p)
+        if DEBUG: print "Examining test suite: %s" % get_html_title(x)
+        tests = [test.get('href') for test in x.findall("//table[@id='suiteTable']//tr//a")]
+    else:
+        tests = glob.glob('test_*.html')
 
     # Set up a test class to return from the function
     class ConvertedTest(GenericTest): pass
@@ -89,12 +96,11 @@ def convert_selenese(my_dir='.', _root_url = None, DEBUG = False):
     ConvertedTest.DEBUG = DEBUG
 
     # Begin conversion
-    if DEBUG: print "Examining test suite: %s" % get_html_title(x)
     i = 0
     test_tables = {}
-    for test in x.findall("//table[@id='suiteTable']//tr//a"):
+    for test in tests:
         # Get HTML file for test
-        x_test = etree.parse(test.get("href"), p)
+        x_test = etree.parse(test, p)
         test_title = get_html_title(x_test)
 
         # Find test table
@@ -102,13 +108,14 @@ def convert_selenese(my_dir='.', _root_url = None, DEBUG = False):
         if test_table != None:
             if DEBUG: print "    Converting test: %s" % test_title
 
-            test_tables[i] = test_table
+            test_name = test_title.startswith("test_") and test_title[5:] or "%s" % i
+            test_tables[test_name] = test_table
             # Create a lambda function, give it a __doc__ so reporting is verbose
             fn = lambda obj: run_html_test(obj)
             fn.__setattr__("__doc__", test_title)
             fn.__setattr__("_selenium_index", i)
             # Now add it to the ConvertedTest class as an object method test_N
-            type(ConvertedTest).__setattr__(ConvertedTest, "test_%d" % i, fn)
+            type(ConvertedTest).__setattr__(ConvertedTest, "test_%s" % test_name, fn)
             i+=1
 
     ConvertedTest.test_tables = test_tables
