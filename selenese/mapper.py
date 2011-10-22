@@ -11,13 +11,38 @@ def _camelcase_to_underscore(text):
     return re.sub('([a-z0-9])([A-Z])', r'\1_\2', s1).lower()
 
 class SeleniumMapper(object):
+    """Maps Selenium commands to Selenese <td> contents"""
+
     # Master debug setting in selenese.py - suggest you change it there
     DEBUG = False
 
-    """Maps Selenium commands to Selenese <td> contents"""
     def __init__(self, test):
         self.test = test
         self.sel = test.selenium
+
+    # Trans-parent introspection - if the method exists on the child self.sel
+    # object, but NOT on this object, then these two methods introspect through to 
+    # the child's method, work out its arg count, and "just" call it.
+    def __getattribute__(self, name):
+        try:
+            # Does the method exist on SeleniumMapper i.e. self?
+            return object.__getattribute__(self, name)
+        except AttributeError, e:
+            # If not, try to get from the child self.sel object
+            sel_method = getattr(self.sel, name)
+            # Wrap in a lambda so we can call it safely with args
+            # based on the number of <td>s rather than the method
+            # signature - see below
+            return lambda args: self.__call_sel__(sel_method, args)
+
+    def __call_sel__(self, sel_method, args):
+        # Use introspection on the underlying Selenium method
+        # The first argument is the self object so ignore
+        num_args = sel_method.im_func.func_code.co_argcount - 1
+        # Now whittle our args down so it matches the method signature
+        args = args[:num_args]
+        # ... And call!
+        sel_method(*args)
 
     def addScript(self, args):
         self.sel.add_script(args[0], args[1])
@@ -28,6 +53,7 @@ class SeleniumMapper(object):
     def answerOnNextPrompt(self, args):
         self.sel.answer_on_next_prompt(args[0])
 
+    """Set: assert"""
     def assertAlert(self, args):
         self.test.assertEquals(self.sel.get_alert(), args[0], args[2])
 
@@ -52,9 +78,6 @@ class SeleniumMapper(object):
     def assertXpathCount(self, args):
         self.test.assertEquals(self.sel.get_xpath_count(args[0]), args[1], args[2])
 
-    def click(self, args):
-        self.sel.click(args[0])
-
     def clickAndWait(self, args):
         self.sel.click(args[0])
         self.sel.wait_for_page_to_load(30000)
@@ -77,8 +100,12 @@ class SeleniumMapper(object):
     def runScript(self, args):
         self.sel.run_script(args[0])
 
-    def type(self, args):
-        self.sel.type(args[0], args[1])
+    """Set: verify"""
+    def verifyElementPresent(self, args):
+        self.test.assert_(self.sel.is_element_present(args[0]), args[2])
+
+    def verifyTextPresent(self, args):
+        self.test.assert_(self.sel.is_text_present(args[0]), args[2])
 
     def waitForPageToLoad(self, args):
         self.sel.wait_for_page_to_load(30000)
